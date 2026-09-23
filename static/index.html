@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Método Cardona" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Método Cardona — oportunidades CALL / PUT sobre acciones (herramienta educativa)" />
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png" />
+  <title>Método Cardona — Opciones CALL / PUT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="/static/vendor/lightweight-charts.js?v=9"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">MC</div>
+      <div>
+        <h1>Método Cardona</h1>
+        <p class="tagline">Oportunidades CALL / PUT · Opciones sobre acciones</p>
+      </div>
+    </div>
+    <div class="top-meta">
+      <span class="badge badge-edu">Herramienta educativa</span>
+      <span id="clock" class="clock muted"></span>
+    </div>
+  </header>
+
+  <div id="install-banner" class="install-banner" hidden>
+    <div class="install-banner-text">
+      <strong>Instalar en el teléfono</strong>
+      <span id="install-hint">Añade Método Cardona a la pantalla de inicio.</span>
+    </div>
+    <div class="install-banner-actions">
+      <button type="button" id="btn-install" class="btn btn-primary" hidden>Instalar</button>
+      <button type="button" id="btn-install-dismiss" class="btn btn-ghost" aria-label="Cerrar">Cerrar</button>
+    </div>
+  </div>
+
+  <div class="disclaimer" role="note">
+    <strong>Aviso importante:</strong>
+    App educativa con conceptos aproximados del Método Cardona (Seminario Creando Riqueza).
+    No es asesoría financiera ni opera opciones binarias — analiza setups CALL/PUT sobre acciones.
+    Datos vía Yahoo Finance. Solo velas completadas.
+  </div>
+
+  <main class="layout">
+    <aside class="panel controls" id="controls-panel">
+      <h2 class="panel-title">Análisis</h2>
+
+      <label for="ticker" class="field-label">Ticker</label>
+      <div class="ticker-row">
+        <input id="ticker" type="text" value="AAPL" maxlength="12"
+          placeholder="Ej. AAPL, NVDA, SPY"
+          autocomplete="off" enterkeyhint="search" inputmode="text" spellcheck="false" />
+        <button id="btn-analyze" type="button" class="btn btn-primary btn-analyze-desktop">Analizar</button>
+      </div>
+      <p class="hint">Escribe el ticker y analiza. Las señales usan velas finales y reglas Cardona.</p>
+
+      <p class="chips-label">Watchlist rápida</p>
+      <div id="chips" class="chips"></div>
+
+      <button id="btn-scan" type="button" class="btn btn-secondary full mt">Escanear watchlist</button>
+      <p class="hint">Incluye SPY, QQQ y blue chips. Ordena por mejor score.</p>
+
+      <div id="status" class="status" hidden></div>
+    </aside>
+
+    <section class="panel results" id="results-area">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="analisis" type="button">Análisis</button>
+        <button class="tab" data-tab="escaneo" type="button">Escaneo</button>
+        <button class="tab" data-tab="teoria" type="button">Teoría</button>
+      </div>
+
+      <div id="tab-analisis">
+        <div class="empty-state" id="empty">
+          <div class="empty-icon" aria-hidden="true">◎</div>
+          <h2>Elige un ticker para ver oportunidades CALL y PUT</h2>
+          <p>Ingresa un símbolo, pulsa <strong>Analizar</strong>, o abre la pestaña <strong>Teoría</strong> para el detalle de cada técnica.</p>
+        </div>
+
+        <div id="analysis" hidden>
+          <div class="results-head">
+            <div class="results-head-main">
+              <h2 class="results-ticker" id="results-title">—</h2>
+              <p class="updated-at" id="updated-at">Última actualización: —</p>
+            </div>
+          </div>
+
+          <div class="summary-grid">
+            <div class="sum-card"><span class="label">Ticker</span><span class="value mono" id="sum-ticker">—</span></div>
+            <div class="sum-card"><span class="label">Precio</span><span class="value mono" id="sum-price">—</span></div>
+            <div class="sum-card"><span class="label">Tendencia 1h</span><span class="value" id="sum-t1h">—</span><span class="trend-rule muted" id="sum-t1h-rule"></span></div>
+            <div class="sum-card"><span class="label">Tendencia 1d</span><span class="value" id="sum-t1d">—</span><span class="trend-rule muted" id="sum-t1d-rule"></span></div>
+            <div class="sum-card"><span class="label">Zona</span><span class="value" id="sum-zona">—</span></div>
+            <div class="sum-card"><span class="label">Sesgo mercado</span><span class="value" id="sum-bias">—</span></div>
+          </div>
+
+          <!-- Hero: oportunidad de comprar -->
+          <section class="opp-hero" id="opp-hero" aria-label="Oportunidad de comprar">
+            <div class="opp-hero-label">Oportunidad de comprar</div>
+            <div id="opp-hero-body" class="opp-hero-body">
+              <p class="muted">Analiza un ticker para ver el mejor setup CALL / PUT.</p>
+            </div>
+          </section>
+
+          <div class="tops">
+            <div class="top-card call" id="top-call-card">
+              <div class="top-head">
+                <span class="dir call">CALL</span>
+                <span class="score" id="top-call-score">—</span>
+              </div>
+              <h3 id="top-call-name">Sin señal CALL</h3>
+              <p id="top-call-conf" class="muted"></p>
+              <ul id="top-call-reasons" class="top-reasons"></ul>
+            </div>
+            <div class="top-card put" id="top-put-card">
+              <div class="top-head">
+                <span class="dir put">PUT</span>
+                <span class="score" id="top-put-score">—</span>
+              </div>
+              <h3 id="top-put-name">Sin señal PUT</h3>
+              <p id="top-put-conf" class="muted"></p>
+              <ul id="top-put-reasons" class="top-reasons"></ul>
+            </div>
+          </div>
+
+          <!-- Pronóstico -->
+          <section class="forecast-section" aria-label="Pronóstico">
+            <div class="forecast-head">
+              <h3 class="section-title" style="margin:0">Pronóstico a corto y largo plazo</h3>
+              <p class="forecast-disclaimer muted" id="forecast-disclaimer">
+                Educativo · señales del método · no es asesoría financiera
+              </p>
+            </div>
+            <div class="forecast-grid">
+              <article class="forecast-card" id="forecast-short">
+                <div class="forecast-card-head">
+                  <span class="forecast-tag">Corto plazo</span>
+                  <span class="forecast-horizon" id="fc-short-horizon">1–5 días</span>
+                </div>
+                <div class="forecast-bias" id="fc-short-bias">—</div>
+                <p class="forecast-conf muted" id="fc-short-conf"></p>
+                <p class="forecast-summary" id="fc-short-summary"></p>
+              </article>
+              <article class="forecast-card" id="forecast-long">
+                <div class="forecast-card-head">
+                  <span class="forecast-tag">Largo plazo</span>
+                  <span class="forecast-horizon" id="fc-long-horizon">semanas</span>
+                </div>
+                <div class="forecast-bias" id="fc-long-bias">—</div>
+                <p class="forecast-conf muted" id="fc-long-conf"></p>
+                <p class="forecast-summary" id="fc-long-summary"></p>
+              </article>
+            </div>
+          </section>
+
+          <div class="spy-panel" id="spy-panel">
+            <h3>Contexto SPY <span class="muted soft">(prioridad ~70%)</span></h3>
+            <div id="spy-meta" class="spy-meta"></div>
+            <div id="chart-spy" class="chart chart-sm"></div>
+          </div>
+
+          <div class="chart-block">
+            <div class="chart-toolbar">
+              <h3 class="section-title" style="margin:0">Gráfica del ticker</h3>
+              <div class="chart-toggle" role="group" aria-label="Temporalidad de gráfica">
+                <button type="button" class="chart-toggle-btn active" data-tf="hourly" id="btn-tf-hourly">Hora</button>
+                <button type="button" class="chart-toggle-btn" data-tf="daily" id="btn-tf-daily">Diario</button>
+                <button type="button" class="chart-toggle-btn" data-tf="weekly" id="btn-tf-weekly">Semanal</button>
+              </div>
+            </div>
+            <p class="chart-caption muted" id="chart-caption">Horario (1h) · PM20 / PM40 · estilo Yahoo</p>
+            <p class="chart-title-label" id="chart-title-label" aria-live="polite"></p>
+            <div id="chart-main" class="chart chart-main"></div>
+          </div>
+
+          <h3 class="section-title">Oportunidades rankeadas</h3>
+          <p class="tip-line muted">Detalle de vigencia y primas: ver <code>VIGENCIA-Y-PRIMAS.md</code>.</p>
+          <div id="opp-list" class="opp-list"></div>
+          <p id="extra-notes" class="hint muted mt"></p>
+
+          <!-- Sobre la acción -->
+          <section class="company-section" id="company-section" aria-label="Sobre la acción">
+            <h3 class="section-title">Sobre la acción</h3>
+            <div class="company-card" id="company-card">
+              <div class="company-meta-grid">
+                <div><span class="label">Nombre</span><span class="value" id="co-name">—</span></div>
+                <div><span class="label">Sector</span><span class="value" id="co-sector">—</span></div>
+                <div><span class="label">Industria</span><span class="value" id="co-industry">—</span></div>
+                <div><span class="label">Bolsa</span><span class="value" id="co-exchange">—</span></div>
+                <div><span class="label">Moneda</span><span class="value" id="co-currency">—</span></div>
+                <div><span class="label">Cap. mercado</span><span class="value" id="co-mcap">—</span></div>
+              </div>
+              <p class="company-summary" id="co-summary">Sin descripción disponible para este ticker.</p>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div id="tab-escaneo" hidden>
+        <h2 class="section-title">Escaneo de watchlist</h2>
+        <p class="muted intro-soft">Toca una fila para abrir el análisis completo.</p>
+        <div id="scan-table-wrap" class="scan-scroll">
+          <p class="empty-mini">Pulsa «Escanear watchlist» para comparar tickers.</p>
+        </div>
+      </div>
+
+      <div id="tab-teoria" hidden>
+        <div class="teoria-layout">
+          <aside class="teoria-sidebar" id="teoria-list-pane">
+            <h2 class="section-title">Teoría de técnicas</h2>
+            <p class="muted intro-soft">Teoría completa de cada setup Cardona. Educativo — no es asesoría financiera.</p>
+
+            <div class="teoria-rules sticky-block" id="teoria-rules">
+              <h3 class="teoria-block-title">Reglas de oro</h3>
+              <ol id="rules-of-gold" class="rules-list"></ol>
+            </div>
+
+            <div class="teoria-trends" id="teoria-trends">
+              <h3 class="teoria-block-title">Tendencias por promedios</h3>
+              <ul id="trend-rules-list" class="rules-list plain"></ul>
+            </div>
+
+            <div class="teoria-toolbar">
+              <div class="teoria-filters" role="group" aria-label="Filtro de dirección">
+                <button type="button" class="filter-btn active" data-filter="Todas">Todas</button>
+                <button type="button" class="filter-btn" data-filter="CALL">CALL</button>
+                <button type="button" class="filter-btn" data-filter="PUT">PUT</button>
+                <button type="button" class="filter-btn" data-filter="Contexto">Contexto</button>
+              </div>
+              <label class="teoria-search-wrap" for="teoria-search">
+                <span class="sr-only">Buscar técnica</span>
+                <input id="teoria-search" type="search" placeholder="Buscar por código o nombre…" autocomplete="off" />
+              </label>
+            </div>
+
+            <div id="teoria-grid" class="strat-grid teoria-grid" aria-live="polite"></div>
+          </aside>
+
+          <div class="teoria-detail" id="teoria-detail" hidden>
+            <button type="button" class="btn btn-ghost teoria-back" id="teoria-back">← Lista</button>
+            <div id="teoria-detail-body"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="mobile-action-bar" id="mobile-action-bar" aria-label="Analizar">
+    <input id="ticker-mobile" type="text" maxlength="12"
+      placeholder="Ticker (ej. AAPL)" autocomplete="off" enterkeyhint="search" aria-label="Ticker" spellcheck="false" />
+    <button type="button" id="btn-analyze-mobile" class="btn btn-primary">Analizar</button>
+  </div>
+
+  <footer class="footer">
+    <p>Implementación cuantitativa aproximada · Velas japonesas · PM20/40/100/200 · Reglas de oro ET · Contexto SPY · 1V-R · RP-GAP · 4P · HD · VRF-E · RT · PM-40H · CN · CF · RCB · GAP-NA · GAP-BA · PF · TF · 1GAP-A · 3SEM · VR-R</p>
+  </footer>
+  <script src="/static/app.js?v=9"></script>
+</body>
+</html>
