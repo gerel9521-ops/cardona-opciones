@@ -730,21 +730,6 @@ function renderAnalysis(data) {
     console.warn("spy meta", err);
   }
 
-  try {
-    const charts = getCharts(data);
-    const isMobile = window.matchMedia("(max-width: 700px)").matches;
-    plotYahooChart("chart-spy", charts.spy, [
-      ["PM20", YAHOO.pm20, "PM20"],
-      ["PM40", YAHOO.pm40, "PM40"],
-      ["PM100", YAHOO.pm100, "PM100"],
-      ["PM200", YAHOO.pm200, "PM200"],
-    ], {
-      height: isMobile ? 220 : 260,
-      timeVisible: false,
-    });
-  } catch (err) {
-    console.warn("spy chart", err);
-  }
 
   try {
     currentTf = "hourly";

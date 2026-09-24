@@ -1,10 +1,10 @@
 /* Método Cardona — service worker (shell offline; API requiere red) */
-const CACHE = "cardona-shell-v9-sw-fix";
+const CACHE = "cardona-shell-v10-sw-fix";
 const SHELL = [
   "/",
-  "/static/styles.css?v=9",
-  "/static/app.js?v=9",
-  "/static/vendor/lightweight-charts.js?v=9",
+  "/static/styles.css?v=10",
+  "/static/app.js?v=10",
+  "/static/vendor/lightweight-charts.js?v=10",
   "/static/styles.css",
   "/static/app.js",
   "/static/vendor/lightweight-charts.js",
