@@ -26,7 +26,16 @@ from cardona_engine import (
     trend_detail_weekly,
     _series_payload,
 )
-from data_fetcher import fetch_company_info, fetch_pair, fetch_spy, fetch_triple
+from data_fetcher import (
+    fetch_company_info,
+    fetch_intraday,
+    fetch_ohlcv,
+    fetch_pair,
+    fetch_spy,
+    fetch_triple,
+    market_session_now,
+    patch_daily_with_live,
+)
 from theory_content import get_theory_payload
 
 BASE = Path(__file__).resolve().parent
@@ -36,7 +45,7 @@ CDMX = ZoneInfo("America/Mexico_City")
 app = FastAPI(
     title="Método Cardona — Opciones",
     description="Herramienta educativa de análisis CALL/PUT (no es asesoría financiera).",
-    version="1.8.2",
+    version="1.9.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
@@ -55,9 +64,13 @@ class ScanRequest(BaseModel):
 def _now_stamps() -> dict[str, str]:
     now_utc = datetime.now(tz=ZoneInfo("UTC"))
     now_local = now_utc.astimezone(CDMX)
+    sess = market_session_now()
     return {
         "updated_at": now_utc.isoformat().replace("+00:00", "Z"),
-        "updated_at_local": now_local.strftime("%d/%m/%Y %H:%M") + " CDMX",
+        "updated_at_local": now_local.strftime("%d/%m/%Y %H:%M:%S") + " CDMX",
+        "session": sess.get("session", "closed"),
+        "session_label": sess.get("session_label", "Cerrado"),
+        "live": True,
     }
 
 
@@ -272,13 +285,28 @@ def enrich_analysis(result: dict[str, Any], df_weekly=None, company: Optional[di
         td["weekly"] = trend_detail_weekly(None)
     result["trend_detail"] = td
 
+    # 15m extended-hours series for finer live chart (signals still use 1h RTH)
+    series_15m = None
+    try:
+        ticker = result.get("ticker") or ""
+        if ticker:
+            df15 = fetch_intraday(ticker, "15m")
+            if df15 is not None and not getattr(df15, "empty", True):
+                frame15 = add_mas(ensure_ohlcv(df15), [20, 40])
+                series_15m = _series_payload(frame15.tail(180), [20, 40])
+    except Exception:
+        series_15m = None
+
     result["charts"] = {
+        "m15": series_15m,
         "hourly": result.get("series_1h"),
         "daily": result.get("series_1d"),
         "weekly": series_w,
         "spy_daily": result.get("series_spy_1d"),
     }
+    result["series_15m"] = series_15m
     result["series_1wk"] = series_w
+    result["extended_hours"] = True
     result["forecast"] = build_forecast(result, trend_1wk=trend_1wk)
     return result
 
@@ -321,12 +349,17 @@ def manifest_root():
 
 @app.get("/api/health")
 def health():
+    sess = market_session_now()
     return {
         "status": "ok",
         "app": "cardona-opciones",
         "strategies": len(STRATEGIES_CATALOG),
         "pwa": True,
-        "version": "1.8.2-leaps-theory",
+        "version": "1.9.0-realtime-welcome",
+        "realtime": True,
+        "extended_hours": True,
+        "session": sess.get("session"),
+        "session_label": sess.get("session_label"),
     }
 
 
@@ -346,6 +379,90 @@ def theory():
     return get_theory_payload()
 
 
+
+@app.get("/api/chart/{ticker}")
+def api_chart(
+    ticker: str,
+    tf: str = Query("hourly", description="hourly|15m|5m|daily|weekly"),
+):
+    """Lightweight live chart series with extended hours (for polling)."""
+    ticker = ticker.upper().strip()
+    if not ticker.replace(".", "").isalnum():
+        raise HTTPException(400, "Ticker inválido.")
+    tf = (tf or "hourly").lower().strip()
+    try:
+        stamps = _now_stamps()
+        if tf in ("15m", "5m"):
+            df = fetch_intraday(ticker, tf)
+            if df.empty:
+                return {"ok": False, "ticker": ticker, "error": "Sin datos", "series": None, **stamps}
+            from cardona_engine import add_mas, ensure_ohlcv, _series_payload
+            frame = add_mas(ensure_ohlcv(df), [20, 40])
+            series = _series_payload(frame.tail(180), [20, 40])
+            return {
+                "ok": True,
+                "ticker": ticker,
+                "tf": tf,
+                "interval": tf,
+                "extended_hours": True,
+                "series": series,
+                "mas": [20, 40],
+                **stamps,
+            }
+        if tf == "weekly":
+            df = fetch_ohlcv(ticker, "1wk", "5y", prepost=False)
+            from cardona_engine import add_mas, ensure_ohlcv, _series_payload
+            frame = add_mas(ensure_ohlcv(df), [20, 40])
+            series = _series_payload(frame.tail(120), [20, 40]) if not frame.empty else None
+            return {
+                "ok": bool(series),
+                "ticker": ticker,
+                "tf": "weekly",
+                "interval": "1wk",
+                "extended_hours": False,
+                "series": series,
+                "mas": [20, 40],
+                **stamps,
+            }
+        if tf == "daily":
+            d = fetch_ohlcv(ticker, "1d", "2y", prepost=False)
+            # Patch last bar with latest extended/intraday price
+            intra = fetch_intraday(ticker, "15m")
+            if not d.empty and not intra.empty:
+                d = patch_daily_with_live(d, intra)
+            from cardona_engine import add_mas, ensure_ohlcv, _series_payload
+            frame = add_mas(ensure_ohlcv(d), [20, 40, 100, 200])
+            series = _series_payload(frame.tail(200), [20, 40, 100, 200]) if not frame.empty else None
+            return {
+                "ok": bool(series),
+                "ticker": ticker,
+                "tf": "daily",
+                "interval": "1d",
+                "extended_hours": True,
+                "series": series,
+                "mas": [20, 40, 100, 200],
+                **stamps,
+            }
+        # hourly default — 1h with prepost
+        h = fetch_ohlcv(ticker, "1h", "60d", prepost=True)
+        from cardona_engine import add_mas, ensure_ohlcv, _series_payload
+        frame = add_mas(ensure_ohlcv(h), [20, 40])
+        series = _series_payload(frame.tail(120), [20, 40]) if not frame.empty else None
+        return {
+            "ok": bool(series),
+            "ticker": ticker,
+            "tf": "hourly",
+            "interval": "1h",
+            "extended_hours": True,
+            "series": series,
+            "mas": [20, 40],
+            **stamps,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(500, f"Error gráfica: {e}") from e
+
+
 @app.post("/api/analyze")
 def api_analyze(body: AnalyzeRequest):
     ticker = body.ticker.upper().strip()
@@ -363,7 +480,7 @@ def api_analyze(body: AnalyzeRequest):
                 "opportunities": [],
                 "strategies_catalog": STRATEGIES_CATALOG,
                 "company": company,
-                "charts": {"hourly": None, "daily": None, "weekly": None, "spy_daily": None},
+                "charts": {"m15": None, "hourly": None, "daily": None, "weekly": None, "spy_daily": None},
                 "forecast": None,
             }
             out.update(_now_stamps())

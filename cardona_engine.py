@@ -1330,6 +1330,19 @@ def prepare_frames(df_1h: pd.DataFrame, df_1d: pd.DataFrame) -> tuple[pd.DataFra
 
 
 def _series_payload(df: pd.DataFrame, mas: list[int]) -> dict:
+    """Serialize OHLCV (+ optional Session) for Lightweight Charts.
+
+    Session values: pre | rth | post | closed (Yahoo extended-hours aware).
+    """
+    sessions = None
+    if "Session" in df.columns:
+        sessions = [str(x) for x in df["Session"]]
+    else:
+        try:
+            from data_fetcher import session_label_for_bar
+            sessions = [session_label_for_bar(i) for i in df.index]
+        except Exception:
+            sessions = ["rth"] * len(df)
     payload = {
         "t": [str(i) for i in df.index],
         "o": [float(x) for x in df["Open"]],
@@ -1337,6 +1350,7 @@ def _series_payload(df: pd.DataFrame, mas: list[int]) -> dict:
         "l": [float(x) for x in df["Low"]],
         "c": [float(x) for x in df["Close"]],
         "v": [float(x) for x in df["Volume"]],
+        "session": sessions,
     }
     for p in mas:
         col = f"PM{p}"
@@ -1364,7 +1378,20 @@ def analyze_ticker(
         "strategies_catalog": STRATEGIES_CATALOG,
     }
     try:
-        h, d = prepare_frames(df_1h, df_1d)
+        # Cardona signals/MAs: regular session (RTH) only — extended-hours noise
+        # must not flip PM20/PM40 or PM100/PM200. Charts use full pre/post series.
+        from data_fetcher import filter_regular_session, annotate_sessions, patch_daily_with_live
+
+        raw_h = annotate_sessions(ensure_ohlcv(df_1h)) if df_1h is not None and not df_1h.empty else ensure_ohlcv(df_1h)
+        raw_d = ensure_ohlcv(df_1d) if df_1d is not None else ensure_ohlcv(pd.DataFrame())
+        # Patch last daily close with latest intraday/extended price when possible
+        if not raw_h.empty and not raw_d.empty:
+            raw_d = patch_daily_with_live(raw_d, raw_h)
+
+        h_rth = filter_regular_session(raw_h) if not raw_h.empty else raw_h
+        # Prefer RTH for signal frames; fall back to all bars if too thin
+        h_sig_src = h_rth if len(h_rth) >= 50 else raw_h
+        h, d = prepare_frames(h_sig_src, raw_d)
         if h.empty or len(h) < 50:
             result["ok"] = False
             result["error"] = f"Datos horarios insuficientes para {ticker}."
@@ -1372,9 +1399,16 @@ def analyze_ticker(
         if drop_forming and len(h) > 50:
             h = h.iloc[:-1].copy()
 
+        # Chart frames: include extended hours + forming candle; MAs on displayed series
+        h_chart = prepare_frames(raw_h, pd.DataFrame())[0] if not raw_h.empty else h
+        d_chart = prepare_frames(pd.DataFrame(), raw_d)[1] if not raw_d.empty else d
+
         spy_h = spy_d = None
         if df_spy_1h is not None and not df_spy_1h.empty:
-            spy_h, _ = prepare_frames(df_spy_1h, pd.DataFrame())
+            spy_raw = annotate_sessions(ensure_ohlcv(df_spy_1h))
+            spy_rth = filter_regular_session(spy_raw)
+            spy_src = spy_rth if len(spy_rth) >= 50 else spy_raw
+            spy_h, _ = prepare_frames(spy_src, pd.DataFrame())
             if drop_forming and len(spy_h) > 50:
                 spy_h = spy_h.iloc[:-1].copy()
         if df_spy_1d is not None and not df_spy_1d.empty:
@@ -1475,13 +1509,17 @@ def analyze_ticker(
             bias += 0.8
         result["market_bias"] = "alcista" if bias >= 1.5 else "bajista" if bias <= -1.5 else "neutral"
 
-        result["series_1h"] = _series_payload(h.tail(90), [20, 40])
-        result["series_1d"] = _series_payload(d.tail(200), [20, 40, 100, 200]) if not d.empty else None
+        # Charts: prefer full extended-hours series (more bars for live view)
+        chart_h = h_chart if h_chart is not None and not h_chart.empty else h
+        chart_d = d_chart if d_chart is not None and not d_chart.empty else d
+        result["series_1h"] = _series_payload(chart_h.tail(120), [20, 40])
+        result["series_1d"] = _series_payload(chart_d.tail(200), [20, 40, 100, 200]) if not chart_d.empty else None
         result["series_spy_1d"] = (
             _series_payload(spy_d.tail(200), [20, 40, 100, 200])
             if spy_d is not None and not spy_d.empty
             else (result["series_1d"] if ticker == "SPY" else None)
         )
+        result["extended_hours"] = True
     except Exception as e:
         result["ok"] = False
         result["error"] = f"Error analizando {ticker}: {e}"

@@ -17,10 +17,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <script src="/static/vendor/lightweight-charts.js?v=10"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=10" />
+  <script src="/static/vendor/lightweight-charts.js?v=11"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=11" />
 </head>
 <body>
+  <div id="welcome-splash" class="welcome-splash" role="dialog" aria-label="Bienvenida">
+    <canvas id="welcome-canvas" aria-hidden="true"></canvas>
+    <p class="welcome-sub">Método Cardona · Opciones</p>
+    <button type="button" id="welcome-skip" class="welcome-skip">Entrar</button>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <div class="logo" aria-hidden="true">MC</div>
@@ -50,7 +56,7 @@
     <strong>Aviso importante:</strong>
     App educativa con conceptos aproximados del Método Cardona (Seminario Creando Riqueza).
     No es asesoría financiera ni opera opciones binarias — analiza setups CALL/PUT sobre acciones.
-    Datos vía Yahoo Finance. Solo velas completadas.
+    Datos vía Yahoo Finance (incluye pre/after market). Polling en vivo ~20s; cotizaciones pueden ir con retraso.
   </div>
 
   <main class="layout">
@@ -173,13 +179,19 @@
           <div class="chart-block">
             <div class="chart-toolbar">
               <h3 class="section-title" style="margin:0">Gráfica del ticker</h3>
+              <div class="chart-live-meta" id="chart-live-meta" hidden>
+                <span class="live-pill" id="live-pill"><span class="live-dot" aria-hidden="true"></span> En vivo</span>
+                <span class="session-pill" id="session-pill">—</span>
+                <span class="live-updated muted" id="live-updated">—</span>
+              </div>
               <div class="chart-toggle" role="group" aria-label="Temporalidad de gráfica">
+                <button type="button" class="chart-toggle-btn" data-tf="m15" id="btn-tf-m15">15m</button>
                 <button type="button" class="chart-toggle-btn active" data-tf="hourly" id="btn-tf-hourly">Hora</button>
                 <button type="button" class="chart-toggle-btn" data-tf="daily" id="btn-tf-daily">Diario</button>
                 <button type="button" class="chart-toggle-btn" data-tf="weekly" id="btn-tf-weekly">Semanal</button>
               </div>
             </div>
-            <p class="chart-caption muted" id="chart-caption">Horario (1h) · PM20 / PM40 · estilo Yahoo</p>
+            <p class="chart-caption muted" id="chart-caption">Horario (1h) · PM20 / PM40 · horas extendidas · estilo Yahoo</p>
             <p class="chart-title-label" id="chart-title-label" aria-live="polite"></p>
             <div id="chart-main" class="chart chart-main"></div>
           </div>
@@ -265,6 +277,6 @@
   <footer class="footer">
     <p>Implementación cuantitativa aproximada · Velas japonesas · PM20/40/100/200 · Reglas de oro ET · Contexto SPY · 1V-R · RP-GAP · 4P · HD · VRF-E · RT · PM-40H · CN · CF · RCB · GAP-NA · GAP-BA · PF · TF · 1GAP-A · 3SEM · VR-R</p>
   </footer>
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

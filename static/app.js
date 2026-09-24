@@ -51,6 +51,11 @@ let lastAnalysis = null;
 let currentTf = "hourly";
 /** Active Lightweight Charts hosts keyed by container id. */
 const chartHosts = Object.create(null);
+/** Live poll (~20s) while tab visible */
+const LIVE_POLL_MS = 20000;
+let livePollTimer = null;
+let livePollInFlight = false;
+let lastLiveTicker = null;
 
 function strategyLabel(code, fallback) {
   if (fallback) return fallback;
@@ -243,6 +248,7 @@ function toCandleData(series) {
   const out = [];
   const n = seriesLen(series);
   let lastT = null;
+  const sessions = (series && series.session) || [];
   for (let i = 0; i < n; i++) {
     const time = parseBarTime(series.t[i]);
     const open = Number(series.o[i]);
@@ -252,7 +258,8 @@ function toCandleData(series) {
     if (time == null || ![open, high, low, close].every(Number.isFinite)) continue;
     if (lastT != null && time <= lastT) continue; // LW charts require ascending unique times
     lastT = time;
-    out.push({ time, open, high, low, close });
+    const sess = sessions[i] || "rth";
+    out.push({ time, open, high, low, close, session: sess });
   }
   return out;
 }
@@ -267,10 +274,14 @@ function toVolumeData(series, candles) {
     const open = Number(series.o[i]);
     const close = Number(series.c[i]);
     if (time == null || !Number.isFinite(vol)) continue;
+    const sess = (series.session && series.session[i]) || "rth";
+    const ext = sess === "pre" || sess === "post" || sess === "closed";
+    const up = ext ? "rgba(38,166,154,0.22)" : YAHOO.volUp;
+    const down = ext ? "rgba(239,83,80,0.22)" : YAHOO.volDown;
     byT.set(time, {
       time,
       value: Math.max(0, vol),
-      color: close >= open ? YAHOO.volUp : YAHOO.volDown,
+      color: close >= open ? up : down,
     });
   }
   return candles.map((c) => byT.get(c.time) || { time: c.time, value: 0, color: YAHOO.volUp });
@@ -363,7 +374,30 @@ function plotYahooChart(elId, series, mas, opts) {
     priceLineVisible: true,
     lastValueVisible: true,
   });
-  candleSeries.setData(candles);
+  // Strip session before setData (LW only wants OHLCV)
+  const candleData = candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));
+  candleSeries.setData(candleData);
+
+  // Subtle markers for extended-hours bars (Yahoo-like cue)
+  try {
+    if (typeof candleSeries.setMarkers === "function") {
+      const markers = [];
+      candles.forEach((c) => {
+        if (c.session === "pre" || c.session === "post") {
+          markers.push({
+            time: c.time,
+            position: "belowBar",
+            color: c.session === "pre" ? "rgba(245,185,66,0.55)" : "rgba(167,139,250,0.55)",
+            shape: "circle",
+            size: 0.4,
+          });
+        }
+      });
+      // Cap markers to avoid clutter
+      const step = Math.max(1, Math.floor(markers.length / 40));
+      candleSeries.setMarkers(markers.filter((_, i) => i % step === 0).slice(-40));
+    }
+  } catch (_) { /* ignore */ }
 
   const volSeries = chart.addHistogramSeries({
     priceFormat: { type: "volume" },
@@ -378,6 +412,7 @@ function plotYahooChart(elId, series, mas, opts) {
   });
   volSeries.setData(toVolumeData(series, candles));
 
+  const maSeries = {};
   (mas || []).forEach(([key, color, _label]) => {
     const line = toLineData(series, key, candles);
     if (!line.length) return;
@@ -389,9 +424,12 @@ function plotYahooChart(elId, series, mas, opts) {
       crosshairMarkerVisible: false,
     });
     s.setData(line);
+    maSeries[key] = s;
   });
 
-  chart.timeScale().fitContent();
+  if (!opts.preserveTimeScale) {
+    chart.timeScale().fitContent();
+  }
 
   const ro = (typeof ResizeObserver !== "undefined")
     ? new ResizeObserver(() => {
@@ -401,12 +439,13 @@ function plotYahooChart(elId, series, mas, opts) {
     : null;
   if (ro) ro.observe(el);
 
-  chartHosts[elId] = { chart, ro };
+  chartHosts[elId] = { chart, ro, candleSeries, volSeries, maSeries, lastSeries: series };
 }
 
 function getCharts(data) {
   const c = (data && data.charts) || {};
   return {
+    m15: c.m15 || data.series_15m || null,
     hourly: c.hourly || data.series_1h || null,
     daily: c.daily || data.series_1d || null,
     weekly: c.weekly || data.series_1wk || null,
@@ -415,18 +454,29 @@ function getCharts(data) {
 }
 
 const TF_META = {
-  hourly: {
-    label: "1H",
-    caption: "Horario (1h) · PM20 / PM40 · estilo Yahoo",
+  m15: {
+    label: "15m",
+    caption: "Intradía (15m) · horas extendidas · PM20 / PM40 · estilo Yahoo",
     mas: [
       ["PM20", YAHOO.pm20, "PM20"],
       ["PM40", YAHOO.pm40, "PM40"],
     ],
     timeVisible: true,
+    apiTf: "15m",
+  },
+  hourly: {
+    label: "1H",
+    caption: "Horario (1h) · horas extendidas · PM20 / PM40 · estilo Yahoo",
+    mas: [
+      ["PM20", YAHOO.pm20, "PM20"],
+      ["PM40", YAHOO.pm40, "PM40"],
+    ],
+    timeVisible: true,
+    apiTf: "hourly",
   },
   daily: {
     label: "1D",
-    caption: "Diario (1d) · PM20 / PM40 / PM100 / PM200",
+    caption: "Diario (1d) · última vela con precio extendido · PM20 / PM40 / PM100 / PM200",
     mas: [
       ["PM20", YAHOO.pm20, "PM20"],
       ["PM40", YAHOO.pm40, "PM40"],
@@ -434,6 +484,7 @@ const TF_META = {
       ["PM200", YAHOO.pm200, "PM200"],
     ],
     timeVisible: false,
+    apiTf: "daily",
   },
   weekly: {
     label: "1W",
@@ -443,6 +494,7 @@ const TF_META = {
       ["PM40", YAHOO.pm40, "PM40"],
     ],
     timeVisible: false,
+    apiTf: "weekly",
   },
 };
 
@@ -455,24 +507,77 @@ function setChartToggle(tf) {
   setText("#chart-caption", meta.caption);
 }
 
-function renderMainChart(data, tf) {
+function renderMainChart(data, tf, opts) {
   if (!data) return;
+  opts = opts || {};
   const charts = getCharts(data);
-  const key = tf === "weekly" ? "weekly" : tf === "daily" ? "daily" : "hourly";
+  const key = (tf === "weekly" || tf === "daily" || tf === "m15") ? tf : "hourly";
   const series = charts[key];
-  const meta = TF_META[key];
+  const meta = TF_META[key] || TF_META.hourly;
   setChartToggle(key);
 
   const n = seriesLen(series);
   const ticker = data.ticker || "";
-  const title = `${ticker} · ${meta.label} · ${n} velas`;
+  const extNote = (key === "hourly" || key === "m15") ? " · pre/post" : "";
+  const title = `${ticker} · ${meta.label}${extNote} · ${n} velas`;
   setText("#chart-title-label", title);
+  updateLiveMeta(data);
 
   const isMobile = window.matchMedia("(max-width: 700px)").matches;
+  // Soft-update last bar when host exists and preserveTimeScale
+  if (opts.softUpdate && trySoftUpdateChart("chart-main", series, meta.mas)) {
+    return;
+  }
   plotYahooChart("chart-main", series, meta.mas, {
     height: isMobile ? 310 : 420,
     timeVisible: meta.timeVisible,
+    preserveTimeScale: !!opts.preserveTimeScale,
   });
+}
+
+function updateLiveMeta(data) {
+  const wrap = $("#chart-live-meta");
+  if (!wrap) return;
+  wrap.hidden = false;
+  const sess = data.session || data.session_label || "";
+  const label = data.session_label || sess || "—";
+  const pill = $("#session-pill");
+  if (pill) {
+    pill.textContent = label;
+    pill.className = "session-pill " + (data.session || "");
+  }
+  const updated = data.updated_at_local || "—";
+  setText("#live-updated", "Actualizado " + updated);
+}
+
+function trySoftUpdateChart(elId, series, mas) {
+  const host = chartHosts[elId];
+  if (!host || !host.candleSeries || !series) return false;
+  const candles = toCandleData(series);
+  if (!candles.length) return false;
+  try {
+    const last = candles[candles.length - 1];
+    host.candleSeries.update({
+      time: last.time,
+      open: last.open,
+      high: last.high,
+      low: last.low,
+      close: last.close,
+    });
+    const vols = toVolumeData(series, [last]);
+    if (vols.length && host.volSeries) host.volSeries.update(vols[0]);
+    (mas || []).forEach(([key]) => {
+      const line = toLineData(series, key, [last]);
+      if (line.length && host.maSeries && host.maSeries[key]) {
+        host.maSeries[key].update(line[0]);
+      }
+    });
+    host.lastSeries = series;
+    return true;
+  } catch (err) {
+    console.warn("softUpdate", err);
+    return false;
+  }
 }
 
 function pickBestOpportunity(data) {
@@ -1273,7 +1378,7 @@ function setupInstallPrompt() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js?v=7", { scope: "/" }).catch((err) => {
+    navigator.serviceWorker.register("/sw.js?v=11", { scope: "/" }).catch((err) => {
       console.warn("SW no registrado:", err);
     });
   });
@@ -1322,3 +1427,203 @@ loadStrategies();
 setupInstallPrompt();
 registerServiceWorker();
 setupChartToggle();
+
+
+/* ========== Live polling (~20s) ========== */
+// LIVE_POLL_MS declared above
+
+function tfToApi(tf) {
+  if (tf === "m15") return "15m";
+  if (tf === "daily") return "daily";
+  if (tf === "weekly") return "weekly";
+  return "hourly";
+}
+
+async function pollLiveChart() {
+  if (livePollInFlight) return;
+  if (document.visibilityState === "hidden") return;
+  if (!lastAnalysis || !lastAnalysis.ticker) return;
+  const ticker = lastAnalysis.ticker;
+  const tf = currentTf || "hourly";
+  const apiTf = tfToApi(tf);
+  livePollInFlight = true;
+  try {
+    const res = await fetch("/api/chart/" + encodeURIComponent(ticker) + "?tf=" + encodeURIComponent(apiTf));
+    if (!res.ok) return;
+    const payload = await res.json();
+    if (!payload || !payload.ok || !payload.series) return;
+    lastAnalysis.charts = lastAnalysis.charts || {};
+    const key = (tf === "m15" || tf === "daily" || tf === "weekly") ? tf : "hourly";
+    lastAnalysis.charts[key] = payload.series;
+    if (key === "hourly") lastAnalysis.series_1h = payload.series;
+    if (key === "m15") lastAnalysis.series_15m = payload.series;
+    if (key === "daily") lastAnalysis.series_1d = payload.series;
+    if (key === "weekly") lastAnalysis.series_1wk = payload.series;
+    lastAnalysis.session = payload.session;
+    lastAnalysis.session_label = payload.session_label;
+    lastAnalysis.updated_at_local = payload.updated_at_local;
+    lastAnalysis.live = true;
+    renderMainChart(lastAnalysis, tf, { softUpdate: true, preserveTimeScale: true });
+  } catch (err) {
+    console.warn("live poll", err);
+  } finally {
+    livePollInFlight = false;
+  }
+}
+
+function setupLivePolling() {
+  if (livePollTimer) clearInterval(livePollTimer);
+  livePollTimer = setInterval(pollLiveChart, LIVE_POLL_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") pollLiveChart();
+  });
+}
+
+/* ========== Welcome splash: candlesticks spell WELCOME BILLIONAIRE ========== */
+const WELCOME_GLYPHS = {
+  W: ["1...1","1...1","1...1","1.1.1","11.11","1...1","1...1"],
+  E: ["11111","1....","1....","1111.","1....","1....","11111"],
+  L: ["1....","1....","1....","1....","1....","1....","11111"],
+  C: ["11111","1....","1....","1....","1....","1....","11111"],
+  O: [".111.","1...1","1...1","1...1","1...1","1...1",".111."],
+  M: ["1...1","11.11","1.1.1","1...1","1...1","1...1","1...1"],
+  B: ["1111.","1...1","1...1","1111.","1...1","1...1","1111."],
+  I: ["11111","..1..","..1..","..1..","..1..","..1..","11111"],
+  N: ["1...1","11..1","1.1.1","1..11","1...1","1...1","1...1"],
+  A: [".111.","1...1","1...1","11111","1...1","1...1","1...1"],
+  R: ["1111.","1...1","1...1","1111.","1.1..","1..1.","1...1"],
+  " ": [".....",".....",".....",".....",".....",".....","....."]
+};
+
+function buildWelcomeColumns(text) {
+  const cols = [];
+  for (let i = 0; i < text.length; i++) {
+    const glyph = WELCOME_GLYPHS[text[i]] || WELCOME_GLYPHS[" "];
+    const width = glyph[0].length;
+    for (let x = 0; x < width; x++) {
+      const rows = [];
+      for (let y = 0; y < 7; y++) rows.push(glyph[y][x] === "1");
+      cols.push(rows);
+    }
+    if (i < text.length - 1) cols.push([false, false, false, false, false, false, false]);
+  }
+  return cols;
+}
+
+function runWelcomeSplash() {
+  const splash = document.getElementById("welcome-splash");
+  const canvas = document.getElementById("welcome-canvas");
+  const skip = document.getElementById("welcome-skip");
+  if (!splash || !canvas) return;
+
+  const preferReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let done = false;
+  const finish = function () {
+    if (done) return;
+    done = true;
+    splash.classList.add("is-done");
+    setTimeout(function () { try { splash.remove(); } catch (e) {} }, 600);
+  };
+  if (skip) skip.addEventListener("click", finish);
+  setTimeout(finish, preferReduced ? 400 : 4200);
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cssW = canvas.clientWidth || Math.min(960, window.innerWidth * 0.96);
+  const cssH = canvas.clientHeight || Math.min(420, window.innerHeight * 0.55);
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) { finish(); return; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const line1 = buildWelcomeColumns("WELCOME");
+  const line2 = buildWelcomeColumns("BILLIONAIRE");
+  const gapLines = 18;
+  const totalCols = Math.max(line1.length, line2.length);
+  const padX = 16;
+  const padY = 20;
+  const usableW = cssW - padX * 2;
+  const usableH = cssH - padY * 2 - gapLines;
+  const colW = usableW / totalCols;
+  const rowH = (usableH / 2) / 7;
+  const bodyW = Math.max(2, colW * 0.55);
+  const wickW = Math.max(1, colW * 0.12);
+
+  let seed = 42;
+  const rnd = function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+  const candles = [];
+  const pushLine = function (cols, y0, basePrice) {
+    cols.forEach(function (rows, ci) {
+      rows.forEach(function (on, ri) {
+        if (!on) return;
+        const green = ((ci + ri) % 3) !== 1;
+        const open = basePrice + (6 - ri) * 1.2 + (rnd() - 0.5) * 0.3;
+        const close = open + (green ? 0.7 + rnd() * 0.5 : -(0.7 + rnd() * 0.5));
+        const high = Math.max(open, close) + 0.25 + rnd() * 0.35;
+        const low = Math.min(open, close) - 0.25 - rnd() * 0.35;
+        candles.push({
+          x: padX + ci * colW + colW / 2,
+          yBase: y0,
+          open: open, close: close, high: high, low: low,
+          appearAt: (ci * 7 + ri) * 8
+        });
+      });
+    });
+  };
+  pushLine(line1, padY, 100);
+  pushLine(line2, padY + usableH / 2 + gapLines, 90);
+
+  const priceToY = function (price, yBase) {
+    const top = yBase;
+    const bot = yBase + rowH * 7;
+    return top + (108 - price) / (108 - 88) * (bot - top);
+  };
+
+  const start = performance.now();
+  const draw = function (now) {
+    if (done) return;
+    const t = now - start;
+    ctx.fillStyle = "#0a0f1a";
+    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.strokeStyle = "rgba(148,163,184,0.06)";
+    ctx.lineWidth = 1;
+    for (let g = 1; g < 6; g++) {
+      const y = (cssH / 6) * g;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cssW, y); ctx.stroke();
+    }
+    candles.forEach(function (c) {
+      const local = t - c.appearAt;
+      if (local < 0) return;
+      const alpha = Math.min(1, local / 280);
+      const yO = priceToY(c.open, c.yBase);
+      const yC = priceToY(c.close, c.yBase);
+      const yH = priceToY(c.high, c.yBase);
+      const yL = priceToY(c.low, c.yBase);
+      const up = c.close >= c.open;
+      const color = up
+        ? ("rgba(38,166,154," + (0.25 + alpha * 0.75) + ")")
+        : ("rgba(239,83,80," + (0.25 + alpha * 0.75) + ")");
+      ctx.strokeStyle = color;
+      ctx.lineWidth = wickW;
+      ctx.beginPath();
+      ctx.moveTo(c.x, yH);
+      ctx.lineTo(c.x, yL);
+      ctx.stroke();
+      const top = Math.min(yO, yC);
+      const h = Math.max(2, Math.abs(yC - yO));
+      ctx.fillStyle = color;
+      ctx.fillRect(c.x - bodyW / 2, top, bodyW, h);
+    });
+    if (t < 4000) requestAnimationFrame(draw);
+  };
+  if (preferReduced) {
+    candles.forEach(function (c) { c.appearAt = 0; });
+    draw(performance.now() + 500);
+  } else {
+    requestAnimationFrame(draw);
+  }
+}
+
+setupLivePolling();
+runWelcomeSplash();

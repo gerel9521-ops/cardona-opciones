@@ -1,15 +1,37 @@
-"""Fetch OHLCV + company info via yfinance for Método Cardona app."""
+"""Fetch OHLCV + company info via yfinance for Método Cardona app.
+
+Intraday fetches include extended hours (prepost=True). Short TTL cache keeps
+charts near real-time without hammering Yahoo.
+"""
 from __future__ import annotations
 
 import time
+from datetime import datetime, time as dtime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
 
-# Short-lived cache so UI reloads don't hammer Yahoo crumb endpoints
+# Short-lived cache so UI reloads / live poll don't hammer Yahoo
+_OHLCV_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 _COMPANY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _COMPANY_TTL_SEC = 600.0
+
+# Intraday (1h / 15m / 5m): <=15s so live poll stays fresh
+_INTRADAY_TTL_SEC = 12.0
+_DAILY_TTL_SEC = 60.0
+_WEEKLY_TTL_SEC = 120.0
+
+ET = ZoneInfo("America/New_York")
+CDMX = ZoneInfo("America/Mexico_City")
+
+# Regular session (US equities) in America/New_York
+_RTH_OPEN = dtime(9, 30)
+_RTH_CLOSE = dtime(16, 0)
+# Extended hours roughly 4:00–9:30 pre, 16:00–20:00 post
+_PRE_OPEN = dtime(4, 0)
+_POST_CLOSE = dtime(20, 0)
 
 
 def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -19,55 +41,186 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _cache_key(ticker: str, interval: str, period: str, prepost: bool) -> str:
+    return f"{ticker}|{interval}|{period}|pp={int(prepost)}"
+
+
+def _ttl_for(interval: str) -> float:
+    if interval in ("1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"):
+        return _INTRADAY_TTL_SEC
+    if interval in ("1wk", "1w"):
+        return _WEEKLY_TTL_SEC
+    return _DAILY_TTL_SEC
+
+
+def _is_intraday(interval: str) -> bool:
+    return interval in ("1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h")
+
+
+def session_label_for_bar(ts) -> str:
+    """Return 'pre' | 'rth' | 'post' | 'closed' for a bar timestamp."""
+    try:
+        if getattr(ts, "tzinfo", None) is None:
+            # Assume ET if naive (yfinance sometimes returns naive)
+            ts = pd.Timestamp(ts).tz_localize(ET)
+        else:
+            ts = pd.Timestamp(ts).tz_convert(ET)
+    except Exception:
+        return "rth"
+    t = ts.timetz().replace(tzinfo=None) if hasattr(ts, "timetz") else ts.time()
+    # weekday: Mon=0 .. Sun=6
+    if ts.weekday() >= 5:
+        return "closed"
+    if _RTH_OPEN <= t < _RTH_CLOSE:
+        return "rth"
+    if _PRE_OPEN <= t < _RTH_OPEN:
+        return "pre"
+    if _RTH_CLOSE <= t < _POST_CLOSE:
+        return "post"
+    return "closed"
+
+
+def filter_regular_session(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only regular-trading-hours bars (for Cardona signals / MAs)."""
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+    mask = []
+    for idx in df.index:
+        mask.append(session_label_for_bar(idx) == "rth")
+    out = df.loc[mask].copy()
+    return out
+
+
+def annotate_sessions(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Session column: pre / rth / post / closed."""
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+    out = df.copy()
+    out["Session"] = [session_label_for_bar(i) for i in out.index]
+    return out
+
+
+def market_session_now() -> dict[str, str]:
+    """Current US equity session label for UI (es-MX)."""
+    now_et = datetime.now(tz=ET)
+    now_cdmx = now_et.astimezone(CDMX)
+    label_key = session_label_for_bar(now_et)
+    labels = {
+        "pre": "Pre-market",
+        "rth": "Mercado abierto",
+        "post": "After hours",
+        "closed": "Cerrado",
+    }
+    return {
+        "session": label_key,
+        "session_label": labels.get(label_key, "Cerrado"),
+        "now_et": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "now_cdmx": now_cdmx.strftime("%d/%m/%Y %H:%M:%S") + " CDMX",
+        "now_cdmx_short": now_cdmx.strftime("%H:%M:%S") + " CDMX",
+    }
+
+
 def fetch_ohlcv(
     ticker: str,
     interval: str = "1h",
     period: Optional[str] = None,
+    *,
+    prepost: Optional[bool] = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     ticker = ticker.upper().strip()
     if not ticker:
         return pd.DataFrame()
     if period is None:
-        if interval == "1h":
+        if interval in ("5m", "15m"):
+            period = "10d"
+        elif interval == "1h":
             period = "60d"
         elif interval in ("1wk", "1w"):
             period = "5y"
         else:
             period = "2y"
+    if prepost is None:
+        prepost = _is_intraday(interval)
+
+    key = _cache_key(ticker, interval, period, bool(prepost))
+    now = time.time()
+    if use_cache:
+        hit = _OHLCV_CACHE.get(key)
+        if hit and (now - hit[0]) < _ttl_for(interval):
+            return hit[1].copy()
+
     try:
         t = yf.Ticker(ticker)
-        df = t.history(period=period, interval=interval, auto_adjust=True)
+        kwargs: dict[str, Any] = {
+            "period": period,
+            "interval": interval,
+            "auto_adjust": True,
+        }
+        if prepost and _is_intraday(interval):
+            kwargs["prepost"] = True
+        df = t.history(**kwargs)
         if df is None or df.empty:
-            df = yf.download(
-                ticker,
+            dl_kwargs = dict(
                 period=period,
                 interval=interval,
                 progress=False,
                 auto_adjust=True,
                 threads=False,
             )
+            if prepost and _is_intraday(interval):
+                dl_kwargs["prepost"] = True
+            df = yf.download(ticker, **dl_kwargs)
         df = _flatten_columns(df)
         if df.empty:
             return pd.DataFrame()
         cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
         df = df[cols].dropna(how="any")
+        df = annotate_sessions(df)
+        _OHLCV_CACHE[key] = (now, df.copy())
         return df
     except Exception:
         return pd.DataFrame()
 
 
 def fetch_pair(ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    h = fetch_ohlcv(ticker, "1h", "60d")
-    d = fetch_ohlcv(ticker, "1d", "2y")
+    h = fetch_ohlcv(ticker, "1h", "60d", prepost=True)
+    d = fetch_ohlcv(ticker, "1d", "2y", prepost=False)
     return h, d
 
 
 def fetch_triple(ticker: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Hourly, daily and weekly OHLCV."""
-    h = fetch_ohlcv(ticker, "1h", "60d")
-    d = fetch_ohlcv(ticker, "1d", "2y")
-    w = fetch_ohlcv(ticker, "1wk", "5y")
+    """Hourly (w/ extended), daily and weekly OHLCV."""
+    h = fetch_ohlcv(ticker, "1h", "60d", prepost=True)
+    d = fetch_ohlcv(ticker, "1d", "2y", prepost=False)
+    w = fetch_ohlcv(ticker, "1wk", "5y", prepost=False)
     return h, d, w
+
+
+def fetch_intraday(ticker: str, interval: str = "15m") -> pd.DataFrame:
+    """Finer intraday with extended hours (5m or 15m)."""
+    if interval not in ("5m", "15m", "1h"):
+        interval = "15m"
+    period = "10d" if interval in ("5m", "15m") else "60d"
+    return fetch_ohlcv(ticker, interval, period, prepost=True)
+
+
+def patch_daily_with_live(df_daily: pd.DataFrame, df_intra: pd.DataFrame) -> pd.DataFrame:
+    """Update last daily bar OHLC with latest extended-hours price when available."""
+    if df_daily is None or df_daily.empty or df_intra is None or df_intra.empty:
+        return df_daily
+    out = df_daily.copy()
+    last_i = df_intra.iloc[-1]
+    last_price = float(last_i["Close"])
+    # Mutate last daily row to reflect live / extended last
+    idx = out.index[-1]
+    row = out.loc[idx]
+    high = max(float(row["High"]), last_price, float(last_i["High"]))
+    low = min(float(row["Low"]), last_price, float(last_i["Low"]))
+    out.loc[idx, "Close"] = last_price
+    out.loc[idx, "High"] = high
+    out.loc[idx, "Low"] = low
+    return out
 
 
 def fetch_spy() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -83,7 +236,6 @@ def _fmt_market_cap(val: Any) -> Optional[str]:
     if n != n or n <= 0:  # NaN or non-positive
         return None
     abs_n = abs(n)
-    # Prefer compact USD ticker labels ($4.96T) + Spanish long form
     if abs_n >= 1e12:
         return f"${n / 1e12:.2f}T · {n / 1e12:.2f} billones USD"
     if abs_n >= 1e9:
@@ -217,7 +369,6 @@ def fetch_company_info(ticker: str) -> dict[str, Any]:
     if cached and (now - cached[0]) < _COMPANY_TTL_SEC:
         return dict(cached[1])
 
-    # Layer sources: search + history meta work without crumb; info is best-effort
     search = _from_search(ticker)
     meta = _from_history_meta(ticker)
     fast = _from_fast_info(ticker)
