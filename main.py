@@ -36,7 +36,7 @@ CDMX = ZoneInfo("America/Mexico_City")
 app = FastAPI(
     title="Método Cardona — Opciones",
     description="Herramienta educativa de análisis CALL/PUT (no es asesoría financiera).",
-    version="1.8.1",
+    version="1.8.2",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
@@ -326,7 +326,7 @@ def health():
         "app": "cardona-opciones",
         "strategies": len(STRATEGIES_CATALOG),
         "pwa": True,
-        "version": "1.8.1-no-spy-chart",
+        "version": "1.8.2-leaps-theory",
     }
 
 

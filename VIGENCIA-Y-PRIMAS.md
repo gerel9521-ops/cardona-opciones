@@ -77,7 +77,7 @@ La tabla Cardona **sugiere un rango de prima “trabajable”** por ticker para 
 
 El método usa sobre todo **corto plazo**. La vigencia no es “una sola para todas”: depende del **horizonte del movimiento** que promete cada estrategia.
 
-### Tres modos de vigencia que usa el material
+### Modos de vigencia del material SCR (núcleo corto plazo)
 
 | Modo | Qué es | Cuándo |
 |------|--------|--------|
@@ -85,11 +85,42 @@ El método usa sobre todo **corto plazo**. La vigencia no es “una sola para to
 | **De un día para otro** | Expira mañana | SPY: si la señal **no** aparece antes de las 12:00; comprar ~**15:50** para el día siguiente (después del mediodía el precio de la 0DTE “cambia y queda solo el paso spot–strike”). |
 | **Corto (2–5 días) / semanal** | Expira en pocos días o el viernes siguiente | Estrategias cuyo efecto dura varios días (piso fuerte, GAP-BA, hanger, etc.). |
 | **3 semanas** | ~15–21 días | Solo cuando el setup es de **gran recorrido** (piso muy barato, techo muy caro, ruptura clara). |
+| **LEAPS / largo (meses–años)** | Vencimiento lejano (a menudo >1 año; p. ej. agosto del año siguiente) | **No es una estrategia numerada del SCR público.** Surge como horizonte de **tesis alcista sostenida** (índices + megacaps). Ver §3.1. **Por confirmar** con material oficial Cardona. |
 
 **Ventana de compra (hora del día):**  
 - General: **11:00–15:59 ET** con vela final.  
 - SPY/QQQ: hasta ~**16:14**.  
 - Única excepción temprana: **1V-R a las 10:00**.
+
+
+### 3.1 Modo LEAPS / CALL larga (evidencia de cartera + lectura educativa)
+
+> **Estado:** el material público SCR (adaptaciones SlideShare / resúmenes de estrategias CALL-PUT) enseña sobre todo **corto plazo** (0DTE → ~3 semanas). **No** aparece una regla publicada que diga “usar LEAPS”.  
+> Lo que sigue combina: (a) definición estándar de LEAPS, (b) captura E*TRADE de trades exitosos del usuario (CALL LEAPS ~ago-2026 en SPY/QQQ/tech), (c) cómo encajaría con el **sesgo** del método (SPY primero, tendencia alcista, no CALL dentro de canal bajista sin RCB).  
+> Todo lo marcado **por confirmar** no debe enseñarse como dogma Cardona.
+
+**Qué es una LEAPS (definición de mercado, no SCR):**  
+opción cotizada con vencimiento lejano (típicamente **más de un año**). Sigue siendo CALL o PUT; cambia el horizonte y el peso del valor temporal.
+
+**Patrón observado en la captura de Gains & Losses (estudio):**
+- Casi todo **CALL** (no PUT en esa foto).
+- Vencimiento **LEAPS** ~ **agosto 2026**.
+- Núcleo **SPY** (muchas strikes ~754–782) y **QQQ** (~721), más **AMD / META / MSFT / NVDA / DIS**.
+- Strikes **OTM / semi-OTM** ambiciosos (no ATM profundo).
+- Tamaños grandes en índices; menores en single names.
+- **No** es el libro de weeklies/0DTE de esa foto.
+
+**Implicaciones educativas (cómo usarlo junto al método, sin inventar reglas):**
+1. Si la tesis es **tendencia alcista de meses** (PM diarias/semanales alcistas, SPY-CTX a favor, sin canal bajista sin romper), una CALL larga puede ser el vehículo — **por confirmar** si Cardona lo enseña explícitamente.
+2. Las reglas de **prima 0.25–0.30 (SPY intradía)** **no aplican** a LEAPS: se paga mucho más valor temporal; el objetivo deja de ser “máxima rentabilidad intradía” y pasa a ser **exposición direccional con tiempo**.
+3. Distancia spot–strike de **4–10 USD en SPY** es regla de **corto**; en LEAPS OTM la distancia puede ser **mucho mayor** (la captura muestra strikes cientos de puntos arriba en SPY a precios actuales). **% OTM típico: por confirmar.**
+4. Encaje natural con setups de **gran recorrido** ya en la app: **3SEM**, **PF**, **RCB**, contexto **SPY-CTX** alcista — no con **1V-R**, **CN** viernes→lunes, ni 0DTE.
+5. Gestión: toma de ganancias parciales, rolling y % OTM exacto → **por confirmar** con más material / más capturas.
+
+**Qué NO hacer (educativo):**
+- Sustituir un setup intradía (1V-R, RT, CN) por LEAPS “porque sí”.
+- Comprar CALL LEAPS **dentro** de canal bajista sin **RCB** (sigue la regla de oro).
+- Esperar que la tabla de primas cortas (0.25–0.30) describa el costo de una LEAPS.
 
 ---
 
@@ -154,6 +185,7 @@ Para cada una: dirección, vigencia típica, por qué esa vigencia, y qué prima
 - **Vigencia:** **2+ días** (ej. AAPL “probable subida × 2 días”; a veces más si cambia de canal).
 - **Prima:** corto/semanal; el recorrido puede ser mayor → no tan OTM.
 - **Strike:** tabla, preferir strikes que capturen 2–3 días de movimiento.
+- **Nota LEAPS (por confirmar):** si la ruptura cambia el canal de **semanas/meses** a alcista y el contexto SPY acompaña, el horizonte “corto” puede quedar corto; valorar 3SEM o, en tesis multi-mes, CALL larga — sin abandonar la regla de **no CALL dentro del canal** sin ruptura.
 
 #### GAP-NA — GAP normal al alza
 - **Vigencia:** 
@@ -172,6 +204,7 @@ Para cada una: dirección, vigencia típica, por qué esa vigencia, y qué prima
 - **Prima:** vencimiento semanal o ~1 semana; el movimiento no es de minutos.
 - **Strike:** no demasiado OTM; el alza puede ser fuerte pero hay que darle tiempo.
 - **Alerta:** si rompen PM200 con fuerza → posible caída larga (meses) → no forzar CALL.
+- **Nota LEAPS (por confirmar):** un piso fuerte en SPY/QQQ con PM100/PM200 respetados es el tipo de contexto donde una cartera de estudio usó CALL LEAPS; el SCR público habla de **días**, no de años. Separar el **setup PF (días)** del **overlay LEAPS (meses)**.
 
 #### 1GAP-A — 1er GAP al alza
 - **Vigencia:** **3–4 días** típicos.
@@ -190,6 +223,7 @@ Para cada una: dirección, vigencia típica, por qué esa vigencia, y qué prima
 - **Cuándo:** setup de gran recorrido (piso muy barato, techo muy caro, ruptura clara) → CALL o PUT según zona.
 - **Strike:** buscar quedar cerca / ITM según tabla de volatilidad a 3 semanas (notas de alumnos: idea de strike “cerca”; en SPY se menciona magnitud grande tipo ±200 en materiales de estudio — **adaptar** al precio actual del activo).
 - **Prima:** será **más cara** que 0DTE (más tiempo). Aquí 0.25–0.30 de SPY intradía **no aplica** igual; se paga más valor temporal a cambio de aguantar el movimiento.
+- **Puente a LEAPS (estudio / por confirmar):** si el setup semanal es de **meses** (no solo 3 semanas) y SPY/QQQ + megacaps están en sesgo alcista claro, algunos traders extienden el vencimiento a **LEAPS** en lugar de ~21 días. Eso **no** está documentado como regla SCR pública; es una lectura de cartera (ver §3.1 y `CARDONA-TRADES-EJEMPLO.md`).
 
 #### Earnings
 - Vigencia: a menudo **corto post-reporte** o el ciclo del evento; strikes ~**5–7%** en notas de alumnos.
@@ -199,7 +233,7 @@ Para cada una: dirección, vigencia típica, por qué esa vigencia, y qué prima
 
 ## 5. Cómo combinar vigencia + prima en la práctica (checklist)
 
-1. Identifica la **estrategia** y su **horizonte** (horas / 1–2 días / 3–5 días / 3 semanas).
+1. Identifica la **estrategia** y su **horizonte** (horas / 1–2 días / 3–5 días / 3 semanas / LEAPS solo si la tesis es multi-mes — por confirmar).
 2. Elige **expiración ≥ ese horizonte** (si el efecto es 3–4 días, no uses solo 0DTE a las 15:00).
 3. Mira la **tabla del ticker** (prima objetivo y spot–strike).
 4. En la cadena de opciones, busca un contrato que:
